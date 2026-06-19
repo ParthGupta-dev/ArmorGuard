@@ -16,6 +16,12 @@ from database import (
 )
 from pdf_export import generate_report_pdf
 
+try:
+    from agent.agent import run_scan as _agent_run_scan
+    AGENT_AVAILABLE = True
+except ImportError:
+    AGENT_AVAILABLE = False
+
 app = FastAPI(
     title="ArmorGuard Backend",
     description="FastAPI service for autonomous AI pentesting agent with ArmorIQ governance",
@@ -188,8 +194,11 @@ def post_scan(body: ScanRequest, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail={"error": "tools_required", "message": "Custom scan mode requires at least one selected tool."})
 
     row = insert_scan(body.target_url, body.scan_mode, body.selected_tools, body.consent_id)
-    # Agent launch wired here once Parth's agent interface is ready:
-    # background_tasks.add_task(run_agent, row["scan_id"], body.target_url, body.scan_mode, body.selected_tools)
+    if AGENT_AVAILABLE:
+        background_tasks.add_task(
+            _agent_run_scan,
+            row["scan_id"], body.target_url, body.scan_mode, body.selected_tools or [],
+        )
     return ScanResponse(scan_id=row["scan_id"], status="started")
 
 
@@ -254,26 +263,47 @@ async def websocket_scan(websocket: WebSocket, scanId: str):
         await websocket.close()
         return
 
+    async def broadcast(event: dict) -> None:
+        """Callback passed to the agent — it calls this to push §7 events over the WebSocket."""
+        await websocket.send_json(event)
+        # Persist audit / drift events to Supabase as they arrive.
+        name = event.get("event")
+        data = event.get("data", {})
+        if name == "tool_status":
+            await asyncio.to_thread(
+                insert_audit_log_event, scanId,
+                "tool_call", f"{data.get('tool')} {data.get('status')}", data,
+            )
+        elif name == "intent_drift_detected":
+            await asyncio.to_thread(
+                insert_intent_drift_event, scanId,
+                data.get("errorCode", ""), data.get("blockReason", ""),
+                data.get("driftClassification", ""), data.get("attemptedAction", ""),
+            )
+        elif name == "scan_completed":
+            await asyncio.to_thread(update_scan, scanId, {"status": "completed", "progress": 100})
+        elif name == "scan_failed":
+            await asyncio.to_thread(update_scan, scanId, {"status": "failed"})
+
     try:
-        await websocket.send_json({"event": "scan_started", "data": {"scanId": scanId}})
-        await websocket.send_json({"event": "agent_reasoning", "data": {"text": "Initializing security checks..."}})
-
-        # Tool events emitted here will be replaced by the real agent stream (Parth).
-        # Audit log writes are wired now so they fire for both scaffold and real agent.
-        for tool in ("nmap", "nuclei", "httpx"):
-            await websocket.send_json({"event": "tool_status", "data": {"tool": tool, "status": "running", "message": f"Running {tool}..."}})
-            await asyncio.to_thread(insert_audit_log_event, scanId, "tool_call", f"{tool} started", {"tool": tool})
-            await websocket.send_json({"event": "tool_status", "data": {"tool": tool, "status": "done", "message": f"{tool} complete."}})
-            await asyncio.to_thread(insert_audit_log_event, scanId, "tool_call", f"{tool} completed", {"tool": tool, "status": "done"})
-
-        await asyncio.to_thread(update_scan, scanId, {"status": "completed", "progress": 100})
-        await websocket.send_json({"event": "scan_completed", "data": {"scanId": scanId}})
+        if AGENT_AVAILABLE:
+            await _agent_run_scan(
+                scanId, row["target_url"], row["scan_mode"],
+                row.get("selected_tools") or [], broadcast,
+            )
+        else:
+            # Scaffold fallback — runs until Parth's agent is merged.
+            await broadcast({"event": "scan_started", "data": {"scanId": scanId}})
+            await broadcast({"event": "agent_reasoning", "data": {"text": "Initializing security checks..."}})
+            for tool in ("nmap", "nuclei", "httpx"):
+                await broadcast({"event": "tool_status", "data": {"tool": tool, "status": "running", "message": f"Running {tool}..."}})
+                await broadcast({"event": "tool_status", "data": {"tool": tool, "status": "done", "message": f"{tool} complete."}})
+            await broadcast({"event": "scan_completed", "data": {"scanId": scanId}})
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        await asyncio.to_thread(update_scan, scanId, {"status": "failed"})
-        await websocket.send_json({"event": "scan_failed", "data": {"reason": str(e)}})
+        await broadcast({"event": "scan_failed", "data": {"reason": str(e)}})
     finally:
         await websocket.close()
 
