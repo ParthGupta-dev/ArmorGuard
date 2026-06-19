@@ -3,17 +3,12 @@ version: '3.8'
 services:
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
-    environment:
-      - SUPABASE_URL=http://placeholder-supabase.url
-      - SUPABASE_KEY=placeholder-supabase-key
-      - ARMORIQ_API_KEY=placeholder-api-key
-      - ARMORIQ_AGENT_ID=placeholder-agent-id
-      - LLM_PROVIDER=gemini
-      - LLM_API_KEY=placeholder-llm-key
+    env_file:
+      - ./backend/.env
     # NOTE: backend is NOT run in privileged mode by default.
     # Open Question: Will Nmap raw sockets require privileged: true in this container?
     # Non-privileged TCP connect scans (-sT) may cover the target without root privileges,

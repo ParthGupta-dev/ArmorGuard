@@ -47,7 +47,7 @@ def run_nmap_scan(
     
     try:
         # Run subprocess with timeout (30 seconds)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         output = result.stdout
         
         # Regex to parse nmap port status lines: e.g. "80/tcp open http"
@@ -127,5 +127,5 @@ def run_nmap_scan(
         print("[nmap_tool] Subprocess timeout expired.")
         return []
     except Exception as e:
-        print(f"[nmap_tool] Error running nmap tool: {e}")
-        raise e
+        print(f"[nmap_tool] WARNING: Error running nmap — {e}")
+        return []

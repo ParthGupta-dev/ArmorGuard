@@ -2,9 +2,10 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load env variables from parent directory .env (if any)
-# Since the backend runs from the root or backend/ folder, load_dotenv will search up.
-load_dotenv()
+# Explicitly target backend/.env so this module works regardless of CWD
+# (uvicorn from backend/, tests from repo root, Docker from /app — all the same path)
+_dotenv_path = Path(__file__).resolve().parent.parent / "backend" / ".env"
+load_dotenv(dotenv_path=_dotenv_path)
 
 # Project Paths
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -20,7 +21,11 @@ ARMORIQ_AGENT_ID = os.environ.get("ARMORIQ_AGENT_ID", "placeholder-agent-id")
 
 # LLM Configuration
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
 
 # Binary Paths
 NMAP_PATH = os.environ.get("NMAP_PATH", "nmap")

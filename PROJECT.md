@@ -599,39 +599,39 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 
 **Build Tracker:**
 
-- [/] Project scaffolding
+- [x] Project scaffolding
   - [x] Install PydanticAI + dependencies
   - [x] Install ArmorIQ SDK
-  - [ ] Configure ArmorIQ client (API key, agent ID)
+  - [x] Configure ArmorIQ client (API key, agent ID)
   - [x] Configure LLM provider via env variable — Groq/Gemini for build phase, swappable to Claude for finals (PydanticAI model string must not be hardcoded)
 
-- [ ] Tool definitions (each wrapped with ArmorIQ `capture_plan` → `get_intent_token` → `invoke`)
-  - [ ] Nmap tool — port scanning, runs subprocess Nmap, parses output into findings
-  - [ ] Nuclei tool — misconfigs, headers, admin panels, CVEs, runs Nuclei CLI with appropriate templates
-  - [ ] sqlmap tool — SQL injection detection (Deep scan only)
-  - [ ] httpx tool — custom HTTP probes not covered by Nuclei
-  - [ ] Scan mode filter — Default runs Nmap + Nuclei + httpx, Deep adds sqlmap + aggressive Nuclei templates, Custom runs user-selected tools
+- [x] Tool definitions (each wrapped with ArmorIQ `capture_plan` → `get_intent_token` → `invoke`)
+  - [x] Nmap tool — port scanning, runs subprocess Nmap, parses output into findings
+  - [x] Nuclei tool — misconfigs, headers, admin panels, CVEs, runs Nuclei CLI with appropriate templates
+  - [x] sqlmap tool — SQL injection detection (Deep scan only)
+  - [x] httpx tool — custom HTTP probes not covered by Nuclei
+  - [x] Scan mode filter — Default runs Nmap + Nuclei + httpx, Deep adds sqlmap + aggressive Nuclei templates, Custom runs user-selected tools
 
-- [ ] Agent loop
-  - [ ] PydanticAI agent definition with all tools registered
-  - [ ] Tool call → ArmorIQ `capture_plan` → `get_intent_token` → `invoke` flow
-  - [ ] Finding extraction from tool results
-  - [ ] Stream findings + LLM reasoning back to the WebSocket handler in real time
+- [x] Agent loop
+  - [x] PydanticAI agent definition with all tools registered
+  - [x] Tool call → ArmorIQ `capture_plan` → `get_intent_token` → `invoke` flow
+  - [x] Finding extraction from tool results
+  - [x] Stream findings + LLM reasoning back to the WebSocket handler in real time
     > **Note (Sujat, 2026-06-19):** Backend expects `agent/agent.py` to export `async def run_scan(scan_id: str, target_url: str, scan_mode: str, selected_tools: list, broadcast) -> None`. Stream every §7 event by calling `await broadcast({"event": "<name>", "data": {...}})` — backend handles all Supabase writes automatically from what you broadcast. Do not write to the DB directly.
-  - [ ] Agent halt on ArmorIQ block (`VerificationError`)
+  - [x] Agent halt on ArmorIQ block (`VerificationError`)
 
-- [ ] ArmorIQ integration
-  - [ ] Wrap every tool call with ArmorIQ validation middleware
-  - [ ] Handle ArmorIQ block response — halt agent, emit `IntentDriftEvent`
+- [x] ArmorIQ integration
+  - [x] Wrap every tool call with ArmorIQ validation middleware
+  - [x] Handle ArmorIQ block response — halt agent, emit `IntentDriftEvent`
 
-- [ ] Governance policy (ArmorIQ — runs inside the backend service)
-  - [ ] Policy setup
-    - [ ] Define engagement scope — approved target, approved tool list per scan mode
-    - [ ] Configure ArmorIQ client with API key and agent ID
-  - [ ] Drift classification rules
-    - [ ] Out-of-scope action attempted → classify as `prompt_injection`
-    - [ ] Valid action, wrong parameters → classify as `hallucination`/drift
-    - [ ] Document rules so the frontend incident panel labels correctly
+- [x] Governance policy (ArmorIQ — runs inside the backend service)
+  - [x] Policy setup
+    - [x] Define engagement scope — approved target, approved tool list per scan mode
+    - [x] Configure ArmorIQ client with API key and agent ID
+  - [x] Drift classification rules
+    - [x] Out-of-scope action attempted → classify as `prompt_injection`
+    - [x] Valid action, wrong parameters → classify as `hallucination`/drift
+    - [x] Document rules so the frontend incident panel labels correctly
   - [ ] Demo prompt injection setup
     - [ ] Author the payload text and embed it in the demo target's page content
     - [ ] Confirm ArmorIQ intercepts, halts, and streams the incident payload correctly

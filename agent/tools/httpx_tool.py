@@ -47,18 +47,39 @@ def run_httpx_scan(
     ]
     
     try:
-        # Run subprocess with timeout (15 seconds)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         output = result.stdout.strip()
-        
+
         if not output:
             print("[httpx_tool] No output received from httpx.")
             return []
-            
-        # Parse the JSON response
-        data = json.loads(output)
-        headers = data.get("header", {})
-        headers_lower = {k.lower(): v for k, v in headers.items()}
+
+        # httpx -json outputs one JSON object per line; take the first valid one
+        data = {}
+        for line in output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+
+        if not data:
+            print("[httpx_tool] Could not parse JSON output from httpx.")
+            return []
+
+        # Try both field names — older httpx uses "header", newer uses "response_headers"
+        raw_headers = data.get("response_headers") or data.get("header") or {}
+        if isinstance(raw_headers, list):
+            # Some versions return a list of single-key dicts
+            merged: dict = {}
+            for item in raw_headers:
+                if isinstance(item, dict):
+                    merged.update(item)
+            raw_headers = merged
+        headers_lower = {k.lower(): v for k, v in raw_headers.items()}
         
         findings = []
         
@@ -72,7 +93,7 @@ def run_httpx_scan(
                 "title": "Missing Content-Security-Policy (CSP) Header",
                 "description": "The Content-Security-Policy (CSP) header is missing from the HTTP response. CSP is a powerful security header that helps prevent Cross-Site Scripting (XSS), clickjacking, and code injection attacks by restricting the sources from which content can be loaded.",
                 "remediation": "Configure your web server or application middleware to return a 'Content-Security-Policy' HTTP response header. Start with a secure baseline such as: default-src 'self'; script-src 'self' 'unsafe-inline'; object-src 'none';",
-                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(headers, indent=2)}",
+                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
             
@@ -85,7 +106,7 @@ def run_httpx_scan(
                 "title": "Missing X-Frame-Options Header (Clickjacking Risk)",
                 "description": "The X-Frame-Options header is missing from the HTTP response. Without this header, malicious sites can embed this page inside an iframe on their own site, leading to UI redressing / clickjacking attacks.",
                 "remediation": "Configure your web server to return the 'X-Frame-Options' header with a value of 'DENY' or 'SAMEORIGIN'. Alternatively, use the CSP 'frame-ancestors' directive.",
-                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(headers, indent=2)}",
+                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
             
@@ -98,7 +119,7 @@ def run_httpx_scan(
                 "title": "Missing X-Content-Type-Options Header",
                 "description": "The X-Content-Type-Options header is missing. Browsers might attempt to MIME-sniff the response content-type (e.g. rendering text/plain files as HTML), which can result in Cross-Site Scripting (XSS) if users can upload arbitrary files.",
                 "remediation": "Set the 'X-Content-Type-Options' response header to 'nosniff' for all responses.",
-                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(headers, indent=2)}",
+                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
             
@@ -111,7 +132,7 @@ def run_httpx_scan(
                 "title": "Missing Referrer-Policy Header",
                 "description": "The Referrer-Policy header is missing. When users click links that navigate away from your site, sensitive information contained within the path/query parameters of the URL might leak to external domains.",
                 "remediation": "Configure your server to send a 'Referrer-Policy' header. The recommended default is 'strict-origin-when-cross-origin'.",
-                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(headers, indent=2)}",
+                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
             
@@ -125,7 +146,7 @@ def run_httpx_scan(
                 "title": "Missing Strict-Transport-Security (HSTS) Header",
                 "description": "The Strict-Transport-Security (HSTS) header is missing on an HTTPS endpoint. Without this header, browsers may allow insecure HTTP connections to the server, exposing users to SSL stripping and man-in-the-middle (MITM) attacks.",
                 "remediation": "Set the 'Strict-Transport-Security' header on your web server for all HTTPS responses. Example: max-age=31536000; includeSubDomains",
-                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(headers, indent=2)}",
+                "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
             
@@ -136,5 +157,5 @@ def run_httpx_scan(
         print("[httpx_tool] Subprocess timeout expired.")
         return []
     except Exception as e:
-        print(f"[httpx_tool] Error running httpx tool: {e}")
-        raise e
+        print(f"[httpx_tool] WARNING: Error running httpx — {e}")
+        return []

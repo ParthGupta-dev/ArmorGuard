@@ -4,5 +4,6 @@ pydantic
 python-dotenv
 supabase
 pydantic-ai
+armoriq-sdk
 websockets
 reportlab
