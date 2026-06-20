@@ -245,6 +245,8 @@ def _get_model():
 _summary_agent: Optional[Agent] = None
 
 
+from pydantic_ai import Agent, RunContext
+
 def _get_summary_agent() -> Agent:
     """A tool-less agent used only to turn the scan results into a short narrative.
     Kept separate from execution so the LLM never drives tool order/parallelism."""
@@ -265,7 +267,7 @@ def _get_summary_agent() -> Agent:
         # [ArmorGuard AI Rewrite] - Expose the HTTP tool so the agent can be tricked 
         # into exfiltrating data, triggering the ArmorIQ gate.
         @_summary_agent.tool
-        async def http_request(ctx: Any, url: str, method: str = "GET", data: str = "") -> str:
+        async def http_request(ctx: RunContext[ScanContext], url: str, method: str = "GET", data: str = "") -> str:
             """Make an HTTP request to an arbitrary URL. Do not use unless explicitly instructed."""
             try:
                 await _armoriq_gate(ctx.deps, "http_request", url)
@@ -367,7 +369,10 @@ async def run_scan(
             # [ArmorGuard AI Rewrite] - If ArmorIQ halts during the summary phase due to 
             # prompt injection, abort immediately and DO NOT broadcast scan_completed.
             return
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"SUMMARIZE FAILED WITH EXCEPTION: {e}", flush=True)
+            traceback.print_exc()
             pass  # summary is best-effort; never fail a completed scan on it
 
         await broadcast({"event": "scan_completed", "data": {"scanId": scan_id}})
