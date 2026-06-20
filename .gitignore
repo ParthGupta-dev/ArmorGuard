@@ -41,3 +41,12 @@ yarn-debug.log*
 yarn-error.log*
 logs/
 *.log
+
+# sqlmap
+sqlmap/
+
+# Local test/scratch scripts
+scratch/
+
+# Claude Code memory
+.claude/

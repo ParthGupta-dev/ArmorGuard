@@ -12,10 +12,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy backend service files and agent package (agent/ lives at repo root)
+COPY backend/ .
+COPY agent/ ./agent/
 
 EXPOSE 8000
 

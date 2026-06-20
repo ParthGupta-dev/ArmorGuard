@@ -1,8 +1,16 @@
 import asyncio
+import sys
 import uuid as _uuid
+from pathlib import Path
 from typing import List, Optional
 from ipaddress import ip_address
 from urllib.parse import urlparse
+
+# Add repo root to sys.path so `from agent.agent import run_scan` resolves whether
+# uvicorn is launched from backend/ (local dev) or from /app (Docker).
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,13 +22,16 @@ from database import (
     insert_scan, get_scan_with_findings, update_scan,
     get_sessions as db_get_sessions,
     insert_audit_log_event, insert_intent_drift_event,
+    insert_finding,
 )
 from pdf_export import generate_report_pdf
 
 try:
     from agent.agent import run_scan as _agent_run_scan
     AGENT_AVAILABLE = True
-except ImportError:
+except Exception as _agent_import_err:
+    import logging as _logging
+    _logging.error("Agent import failed — running scaffold fallback: %s", _agent_import_err, exc_info=True)
     AGENT_AVAILABLE = False
 
 app = FastAPI(
@@ -285,6 +296,13 @@ async def websocket_scan(websocket: WebSocket, scanId: str):
                 insert_intent_drift_event, scanId,
                 data.get("errorCode", ""), data.get("blockReason", ""),
                 data.get("driftClassification", ""), data.get("attemptedAction", ""),
+            )
+        elif name == "finding_discovered":
+            await asyncio.to_thread(
+                insert_finding, scanId,
+                data.get("severity"), data.get("title"),
+                data.get("description"), data.get("remediation"),
+                data.get("evidence"),
             )
         elif name == "scan_completed":
             await asyncio.to_thread(update_scan, scanId, {"status": "completed", "progress": 100})

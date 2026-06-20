@@ -2,6 +2,27 @@
 
 ArmorGuard is an autonomous AI pentesting agent designed to proactively probe target web applications for security vulnerabilities and automatically generate severity-scored forensic audit reports. Governed in real time by the ArmorIQ SDK, the agent intercepts intent drifts and prompt injections mid-task, ensuring safe and compliant execution of diagnostic and exploitation tools.
 
+## Prerequisites
+
+Install these tools system-wide before running locally:
+
+| Tool | Install |
+|---|---|
+| nmap | `winget install Insecure.Nmap` (Windows) · `brew install nmap` (macOS) · `apt install nmap` (Linux) |
+| nuclei | See `infrastructure/install_tools.ps1` (Windows) or `infrastructure/install_tools.sh` (Linux/macOS) |
+| httpx (ProjectDiscovery) | Same as above |
+| sqlmap | Bundled in repo under `sqlmap/` |
+
+One-command install for nuclei + httpx:
+```powershell
+# Windows
+.\infrastructure\install_tools.ps1
+```
+```bash
+# Linux / macOS
+bash infrastructure/install_tools.sh
+```
+
 ## Running Locally
 
 You can run the entire system using either Docker Compose or via individual service commands.
@@ -29,7 +50,7 @@ venv\Scripts\activate
 source venv/bin/activate
 
 pip install -r requirements.txt
-python main.py
+uvicorn main:app --reload
 ```
 Server runs at `http://127.0.0.1:8000`.
 
@@ -48,20 +69,96 @@ python -m venv venv
 # Activate virtual environment
 # Windows:
 venv\Scripts\activate
+# Unix:
+source venv/bin/activate
 
 pip install -r requirements.txt
 python app.py
 ```
 Demo app runs at `http://127.0.0.1:5000`.
 
-## Architecture, Locked Contracts, and Database Schema
-- The full specifications, API endpoint signatures, and database schemas are defined in [BUILDPLAN.md](BUILDPLAN.md) at the repository root.
-- The PostgreSQL database schema definition is copied in [schema.sql](backend/database/schema.sql).
+## Environment Variables
 
-## Scaffold State
-- **Backend**: Fully wired to Supabase — all 6 REST routes and the WebSocket handler read/write real data. Consent flow, scan management, report assembly, PDF export (ReportLab), audit trail (`AuditLogEvent` + `IntentDriftEvent`), and session history are all live. Agent integration interface is in place; boots with a scaffold fallback until the agent is merged.
-- **Frontend**: Scaffolding initialized using Next.js 14 (App Router) + Tailwind CSS. Home page styled with a dark premium theme.
-- **Demo Target**: A minimal Flask application listening on port 5000.
+Copy `backend/.env.example` to `backend/.env` and fill in your keys:
+
+```env
+SUPABASE_URL=your-supabase-project-url
+SUPABASE_KEY=your-supabase-service-role-key
+
+ARMORIQ_API_KEY=ak_live_...
+ARMORIQ_AGENT_ID=
+
+# LLM provider: gemini | groq | claude | ollama
+LLM_PROVIDER=groq
+GEMINI_API_KEY=
+GROQ_API_KEY=
+CLAUDE_API_KEY=
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+```
+
+## Usage
+
+### Running a Scan
+
+> **Note:** For targets running on your local machine while using Docker, use `host.docker.internal` instead of `localhost` so the agent container can reach the host network.
+
+#### 1. Get consent (required for public/non-local targets)
+```bash
+curl -X POST http://localhost:8000/consent \
+  -H "Content-Type: application/json" \
+  -d '{"targetUrl": "http://host.docker.internal:5000"}'
+```
+Response includes a `consentId`.
+
+#### 2. Start a scan
+```bash
+curl -X POST http://localhost:8000/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "targetUrl": "http://host.docker.internal:5000",
+    "scanMode": "default",
+    "selectedTools": [],
+    "consentId": "<consentId from step 1>"
+  }'
+```
+Scan modes: `default` (nmap + nuclei + httpx) · `deep` (+ sqlmap + aggressive Nuclei) · `custom` (pick tools via `selectedTools`)
+
+Response includes a `scanId`.
+
+#### 3. Watch live events over WebSocket
+```bash
+wscat -c ws://localhost:8000/ws/scan/<scanId>
+```
+Or connect from any WebSocket client. Events stream in real time:
+- `scan_started` → `tool_status` (running/done per tool) → `finding_discovered` (one per finding) → `agent_reasoning` (Groq summary) → `scan_completed`
+- On ArmorIQ block: `intent_drift_detected` → `agent_halted`
+
+#### 4. Get the report
+```bash
+# JSON report
+curl http://localhost:8000/report/<scanId>
+
+# PDF export
+curl http://localhost:8000/report/<scanId>/export -o report.pdf
+```
+
+#### 5. View session history
+```bash
+curl http://localhost:8000/sessions
+```
+
+---
+
+## Architecture, Locked Contracts, and Database Schema
+- The full specifications, API endpoint signatures, and database schemas are defined in [PROJECT.md](PROJECT.md) at the repository root.
+- The PostgreSQL database schema definition is in PROJECT.md §7.
+
+## Current State
+- **Backend**: Fully wired to Supabase — all 6 REST routes and the WebSocket handler read/write real data. Consent flow, scan management, report assembly, PDF export (ReportLab), audit trail (`AuditLogEvent` + `IntentDriftEvent`), and session history are all live.
+- **Agent**: PydanticAI agent fully implemented — nmap, nuclei, httpx, sqlmap tools wired with ArmorIQ governance. Runs on Groq (swappable to Gemini or Claude via `LLM_PROVIDER`). Streams tool status, findings, and LLM reasoning live over WebSocket.
+- **Frontend**: Scaffolding initialized using Next.js 14 (App Router) + Tailwind CSS.
+- **Demo Target**: A minimal Flask application listening on port 5000. Planted vulnerabilities and prompt injection payload pending.
 
 ## Team Collaboration & Git Workflow
 
@@ -87,7 +184,7 @@ git checkout -b <your-name>/<feature-name>
 
 ### 3. Make Changes and Commit
 Make your changes locally. Follow these rules before committing:
-- Do NOT modify locked API contracts in `BUILDPLAN.md` or `PROJECT.md` unless agreed upon by the entire team.
+- Do NOT modify locked API contracts in `PROJECT.md` unless agreed upon by the entire team.
 - Ensure your changes follow local conventions (snake_case internally in Python backend, camelCase JSON over the wire, etc.).
 
 Commit with clear messages:
@@ -105,4 +202,3 @@ Go to your Git hosting platform (GitHub/GitLab) and create a **Pull Request (PR)
 
 ### 5. Update the Project Tracker
 Once your feature is merged or as you progress, update your checklist status under Section 9 of `PROJECT.md` by checking off completed tasks (`[x]`) or marking in-progress features (`[/]`).
-
