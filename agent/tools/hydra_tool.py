@@ -1,57 +1,83 @@
+import logging
 import subprocess
+import uuid
+from datetime import datetime
+from typing import List, Dict, Any
 from urllib.parse import urlparse
-from typing import List
 
-def run_hydra_scan(target_url: str, scan_id: str) -> List[dict]:
-    findings = []
-    
-    # 1. Cleanly parse the URL to satisfy Hydra's strict argument format
-    parsed_url = urlparse(target_url)
-    host = parsed_url.hostname
-    port = str(parsed_url.port) if parsed_url.port else "80"
-    path = parsed_url.path if parsed_url.path else "/"
-    
+from agent.config import HYDRA_PATH, HYDRA_WORDLIST
+
+_DEFAULT_USERLIST = ["admin", "root", "user", "test", "administrator"]
+_DEFAULT_PASSLIST = ["admin", "password", "123456", "root", "pass", "test", ""]
+
+
+def run_hydra_scan(target_url: str, scan_id: str) -> List[Dict[str, Any]]:
+    parsed = urlparse(target_url)
+    host = parsed.hostname
+    scheme = parsed.scheme or "http"
+    port = str(parsed.port) if parsed.port else ("443" if scheme == "https" else "80")
+    path = parsed.path if parsed.path else "/"
+
     if not host:
-        return [{"tool": "hydra", "severity": "error", "title": "Malformed URL", "description": f"Could not parse host from {target_url}"}]
+        return []
 
-    # 2. Build the command using proper structural arguments
+    # Use a bundled wordlist if available, otherwise fall back to a small inline list.
+    if HYDRA_WORDLIST:
+        user_arg = ["-L", HYDRA_WORDLIST]
+        pass_arg = ["-P", HYDRA_WORDLIST]
+    else:
+        user_arg = ["-l", "admin"]
+        pass_arg = ["-p", "admin"]
+
+    service = "https-get" if scheme == "https" else "http-get"
     cmd = [
-        "hydra",
-        "-l", "admin",
-        "-p", "admin", # Ideally replace with -P path_to_wordlist for real agent utility
+        HYDRA_PATH,
+        *user_arg,
+        *pass_arg,
         "-s", port,
+        "-t", "4",      # 4 parallel tasks — stay polite
+        "-f",            # stop after first valid credential pair
         host,
-        "http-get",
-        path
+        service,
+        path,
     ]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        
-        # Default security footprint
-        severity = "info"
-        title = "Hydra Authentication Check completed"
-        description = "No weak credentials detected."
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        stdout = result.stdout
 
-        # 3. Dynamic string parsing so the agent actually understands a success
-        if "login:" in result.stdout.lower() or "valid" in result.stdout.lower():
-            severity = "critical"
-            title = "Critical Vulnerability: Weak Authentication Found"
-            description = f"Hydra successfully cracked the service:\n{result.stdout}"
-            
-        findings.append({
-            "tool": "hydra",
-            "severity": severity,
-            "title": title,
-            "description": description[:2000]
-        })
+        if "login:" in stdout.lower() and "password:" in stdout.lower():
+            cracked_line = next(
+                (ln for ln in stdout.splitlines() if "login:" in ln.lower()), stdout[:500]
+            )
+            return [{
+                "findingId": str(uuid.uuid4()),
+                "scanId": scan_id,
+                "severity": "Critical",
+                "title": "Weak/Default Credentials Detected",
+                "description": (
+                    f"Hydra found valid credentials on {target_url}. "
+                    "The service accepted a guessable username/password combination."
+                ),
+                "remediation": (
+                    "Immediately change the default credentials. Enforce a strong password policy, "
+                    "implement account lockout after failed attempts, and consider MFA."
+                ),
+                "evidence": cracked_line.strip()[:2000],
+                "createdAt": datetime.utcnow().isoformat() + "Z",
+            }]
 
+        # No credentials found — informational, not a finding worth persisting.
+        return []
+
+    except subprocess.TimeoutExpired:
+        print("[hydra_tool] WARNING: hydra timed out.")
+        return []
+    except FileNotFoundError:
+        msg = f"[hydra_tool] '{HYDRA_PATH}' not found on PATH — hydra is not installed. Skipping."
+        logging.warning(msg)
+        print(msg)
+        return []
     except Exception as e:
-        findings.append({
-            "tool": "hydra",
-            "severity": "low",
-            "title": "Hydra Execution Error",
-            "description": str(e)
-        })
-
-    return findings
+        print(f"[hydra_tool] WARNING: error running hydra — {e}")
+        return []

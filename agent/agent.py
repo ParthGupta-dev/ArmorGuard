@@ -206,12 +206,8 @@ SCANNERS = {
                       _nikto_run, "Running nikto web server scan..."),
     "sqlmap": Scanner("sqlmap", "Run sqlmap SQL injection test over discovered parameterised URLs",
                       _sqlmap_run, "Running sqlmap SQL injection test on discovered parameters..."),
-    "hydra": Scanner(
-    "hydra",
-    "Run authentication security assessment",
-    _hydra_run,
-    "Running Hydra authentication checks..."
-),
+    "hydra":  Scanner("hydra", "Run Hydra brute-force authentication check",
+                      _hydra_run, "Running Hydra authentication checks..."),
 }
 
 
