@@ -6,8 +6,8 @@ from typing import List
 # Attack tools read the endpoints/parameters discovery wrote into the scan context,
 # so discovery MUST precede them. arjun must precede sqlmap (it supplies the params).
 TOOLS_BY_MODE = {
-    "default": ["nmap", "katana", "ffuf", "httpx", "nuclei"],
-    "deep":    ["nmap", "katana", "ffuf", "arjun", "httpx", "nuclei", "nikto", "sqlmap", "hydra"],
+    "default": ["nmap", "httpx", "katana", "ffuf", "nuclei"],
+    "deep":    ["nmap", "httpx", "katana", "ffuf", "arjun", "nikto", "nuclei", "sqlmap", "hydra"],
 }
 VALID_TOOLS = set(TOOLS_BY_MODE["deep"])
 
