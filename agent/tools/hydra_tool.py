@@ -1,5 +1,6 @@
 import logging
 import subprocess
+import tempfile
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any
@@ -9,6 +10,13 @@ from agent.config import HYDRA_PATH, HYDRA_WORDLIST
 
 _DEFAULT_USERLIST = ["admin", "root", "user", "test", "administrator"]
 _DEFAULT_PASSLIST = ["admin", "password", "123456", "root", "pass", "test", ""]
+
+
+def _write_wordlist_file(words: List[str]) -> str:
+    fd, path = tempfile.mkstemp(prefix="hydra_wordlist_", suffix=".txt")
+    with open(fd, "w") as fh:
+        fh.write("\n".join(words))
+    return path
 
 
 def run_hydra_scan(target_url: str, scan_id: str) -> List[Dict[str, Any]]:
@@ -21,13 +29,18 @@ def run_hydra_scan(target_url: str, scan_id: str) -> List[Dict[str, Any]]:
     if not host:
         return []
 
-    # Use a bundled wordlist if available, otherwise fall back to a small inline list.
+    # Use a bundled wordlist if available, otherwise fall back to the built-in default
+    # username/password lists above — a single "admin:admin" guess is not a brute force.
+    tmp_userlist = None
+    tmp_passlist = None
     if HYDRA_WORDLIST:
         user_arg = ["-L", HYDRA_WORDLIST]
         pass_arg = ["-P", HYDRA_WORDLIST]
     else:
-        user_arg = ["-l", "admin"]
-        pass_arg = ["-p", "admin"]
+        tmp_userlist = _write_wordlist_file(_DEFAULT_USERLIST)
+        tmp_passlist = _write_wordlist_file(_DEFAULT_PASSLIST)
+        user_arg = ["-L", tmp_userlist]
+        pass_arg = ["-P", tmp_passlist]
 
     service = "https-get" if scheme == "https" else "http-get"
     cmd = [
@@ -81,3 +94,11 @@ def run_hydra_scan(target_url: str, scan_id: str) -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"[hydra_tool] WARNING: error running hydra — {e}")
         return []
+    finally:
+        import os
+        for p in (tmp_userlist, tmp_passlist):
+            if p:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass    

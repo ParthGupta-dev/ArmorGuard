@@ -14,8 +14,6 @@ from agent.config import SQLMAP_PATH
 def run_sqlmap_scan(
     target_url: str,
     scan_id: str,
-    client: Optional[Any] = None,
-    intent_token: Optional[Any] = None,
     param_urls: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     # Prefer the parameterised URLs discovered by katana — those are the real injection

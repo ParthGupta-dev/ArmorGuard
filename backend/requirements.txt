@@ -9,3 +9,4 @@ websockets
 reportlab
 sqlmap
 arjun
+groq

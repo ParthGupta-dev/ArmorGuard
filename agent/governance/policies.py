@@ -6,8 +6,8 @@ from typing import List
 # Attack tools read the endpoints/parameters discovery wrote into the scan context,
 # so discovery MUST precede them. arjun must precede sqlmap (it supplies the params).
 TOOLS_BY_MODE = {
-    "default": ["nmap", "httpx", "katana", "ffuf", "nuclei"],
-    "deep":    ["nmap", "httpx", "katana", "ffuf", "arjun", "nikto", "nuclei", "sqlmap", "hydra"],
+    "default": ["nmap", "katana", "ffuf", "httpx", "nuclei"],
+    "deep":    ["nmap", "katana", "ffuf", "arjun", "httpx", "nuclei", "nikto", "sqlmap", "hydra"],
 }
 VALID_TOOLS = set(TOOLS_BY_MODE["deep"])
 
@@ -19,4 +19,11 @@ def get_tools_for_mode(scan_mode: str, selected_tools: List[str]) -> List[str]:
 
 
 def build_armoriq_plan(tools: List[str], target_url: str, scan_mode: str) -> dict:
-    return {"steps": [{"action": t} for t in tools]}
+    """Each plan step now carries the actual target and scan mode, not just a bare
+    action name — ArmorIQ's policy decision needs to know *what* it's evaluating, not
+    only which tool is about to run. "http_request" is also registered here even though
+    it's not a scan tool: the post-scan summary agent can call it, and that call must be
+    checked by the exact same governance gate as every scan tool, not skipped."""
+    steps = [{"action": t, "target": target_url, "scan_mode": scan_mode} for t in tools]
+    steps.append({"action": "http_request", "target": target_url, "scan_mode": scan_mode})
+    return {"steps": steps}

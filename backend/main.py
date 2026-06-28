@@ -476,7 +476,8 @@ async def websocket_scan(websocket: WebSocket, scanId: str):
             subs.discard(queue)
             if not subs:
                 _subscribers.pop(scanId, None)
-        await websocket.close()
+        if websocket.client_state.name != "DISCONNECTED":
+            await websocket.close()
 
 
 if __name__ == "__main__":

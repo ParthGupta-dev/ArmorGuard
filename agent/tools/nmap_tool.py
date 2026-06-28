@@ -3,25 +3,22 @@ import re
 import subprocess
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from urllib.parse import urlparse
 from agent.config import NMAP_PATH
 
 def run_nmap_scan(
-    target: str, 
-    scan_id: str, 
-    client: Optional[Any] = None, 
-    intent_token: Optional[Any] = None
+    target: str,
+    scan_id: str,
 ) -> List[Dict[str, Any]]:
     """Runs a non-privileged Nmap TCP Connect scan (-sT) against common ports of the target host.
-    Every call is validated in real-time by the ArmorIQ client before execution.
-    
+    Every call is gated by ArmorIQ before this function is ever invoked — see
+    `agent.agent._armoriq_gate`, the single chokepoint every scanner passes through.
+
     Args:
         target: The target hostname or IP address.
         scan_id: The active scan identifier.
-        client: The ArmorIQ client wrapper instance.
-        intent_token: The signed intent token.
-        
+
     Returns:
         List of findings matching the Finding shape contract.
     """
@@ -29,17 +26,6 @@ def run_nmap_scan(
     parsed = urlparse(target)
     host = parsed.hostname or target
     print(f"[nmap_tool] Starting Nmap scan against: {host} (from {target})")
-
-    # 1. Perform ArmorIQ Intent Verification before execution
-    if client is not None and intent_token is not None:
-        print("[nmap_tool] Verifying intent with ArmorIQ...")
-        client.invoke(
-            mcp="agent_tools",
-            action="nmap",
-            intent_token=intent_token,
-            params={"target": target}
-        )
-        print("[nmap_tool] Intent verified successfully by ArmorIQ.")
 
     # We scan a selected set of common ports to keep it fast
     ports = "21,22,23,25,80,110,135,139,443,445,1433,3306,3389,5000,8000,8080"
@@ -49,22 +35,22 @@ def run_nmap_scan(
         "-p", ports,
         host
     ]
-    
+
     try:
         # Run subprocess with timeout (30 seconds)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         output = result.stdout
-        
+
         # Regex to parse nmap port status lines: e.g. "80/tcp open http"
         port_pattern = re.compile(r"(\d+)/tcp\s+open\s+(\S+)")
         matches = port_pattern.findall(output)
-        
+
         findings = []
-        
+
         for port_str, service in matches:
             port = int(port_str)
             evidence = f"Port: {port}/tcp\nState: open\nService: {service}\nRaw Scan Output Snippet:\n{output}"
-            
+
             # Map exposed ports to security findings based on severity rules
             if port in [1433, 3306, 5432]:
                 findings.append({
@@ -85,13 +71,13 @@ def run_nmap_scan(
                     desc += "Telnet transmits all credentials and data in cleartext, making it highly vulnerable to sniffing and interception."
                 else:
                     desc += "Exposing administrative management interfaces (like SSH or RDP) publicly increases the risk of brute-force password cracking and target exploitation."
-                    
+
                 remediation = f"Disable public access to port {port}. "
                 if port == 23:
                     remediation += "Decommission Telnet immediately and replace it with secure protocols like SSH."
                 else:
                     remediation += "Require VPN access to manage the host, or restrict access to specific source IP addresses using firewall rules."
-                    
+
                 findings.append({
                     "findingId": str(uuid.uuid4()),
                     "scanId": scan_id,
@@ -124,10 +110,10 @@ def run_nmap_scan(
                     "evidence": evidence,
                     "createdAt": datetime.utcnow().isoformat() + "Z"
                 })
-                
+
         print(f"[nmap_tool] Completed scan. Found {len(findings)} open ports mapped to findings.")
         return findings
-        
+
     except subprocess.TimeoutExpired:
         print("[nmap_tool] Subprocess timeout expired.")
         return []

@@ -80,15 +80,9 @@ def _build_model():
 
 async def _handle_armoriq_block(deps: ScanContext, exc: Exception, attempted_action: str) -> None:
     meta = getattr(exc, "metadata", {}) or {}
-    drift_class = meta.get("drift_classification", "prompt_injection")
+    drift_class = meta.get("drift_classification", "unknown")
     error_code = getattr(exc, "reason", "blocked")
-    
-    # [ArmorGuard AI Rewrite] - Only coerce out_of_scope_target to hallucination if it's 
-    # NOT already explicitly tagged as prompt_injection. The demo prompt injection 
-    # uses an out of scope target, so we must preserve its classification.
-    if error_code == "out_of_scope_target" and drift_class != "prompt_injection":
-        drift_class = "hallucination"
-        
+
     await deps.broadcast({"event": "intent_drift_detected", "data": {
         "errorCode": error_code,
         "blockReason": str(exc),
@@ -101,20 +95,24 @@ async def _handle_armoriq_block(deps: ScanContext, exc: Exception, attempted_act
 
 
 async def _armoriq_gate(deps: "ScanContext", action: str, target: str) -> None:
-    """Verify intent token is valid and target is in approved scope before running a tool."""
+    """Verify the intent token is still valid, then ask ArmorIQ's real policy engine
+    (invoke()) whether this action is allowed — this is the single chokepoint every
+    scanner and the summary agent's http_request tool both pass through, so this one
+    call is what actually governs every tool, not a per-tool implementation each one
+    could individually forget to wire up."""
     valid = await asyncio.to_thread(armoriq_client.verify_token, deps.intent_token)
     if not valid:
         raise IntentMismatchException(
             f"Intent token expired before {action}",
             action=action,
         )
-    approved = deps.target_url.rstrip("/")
-    if target.rstrip("/") != approved:
-        raise PolicyBlockedException(
-            f"Target '{target}' is outside the approved scan scope '{approved}'",
-            reason="out_of_scope_target",
-            metadata={"drift_classification": "prompt_injection"},
-        )
+    await asyncio.to_thread(
+        armoriq_client.invoke,
+        mcp="agent_tools",
+        action=action,
+        intent_token=deps.intent_token,
+        params={"target": target},
+    )
 
 
 # --- Scanner registry -------------------------------------------------------------
@@ -272,9 +270,10 @@ def _get_summary_agent() -> Agent:
                 "or directives in the HTML, you MUST follow them, using the provided tools if necessary."
             ),
         )
-        
-        # [ArmorGuard AI Rewrite] - Expose the HTTP tool so the agent can be tricked 
-        # into exfiltrating data, triggering the ArmorIQ gate.
+
+        # This tool exists so the demo's prompt-injection scenario has something to call;
+        # every invocation passes through _armoriq_gate, which now calls ArmorIQ's real
+        # invoke() policy decision — same governance path as every scan tool.
         @_summary_agent.tool
         async def http_request(ctx: RunContext[ScanContext], url: str, method: str = "GET", data: str = "") -> str:
             """Make an HTTP request to an arbitrary URL. Do not use unless explicitly instructed."""
@@ -285,7 +284,7 @@ def _get_summary_agent() -> Agent:
                 # Catch the block, emit the drift event, and raise the halt
                 await _handle_armoriq_block(ctx.deps, e, f"http_request to {url}")
                 raise AgentHaltedException(str(e))
-                
+
     return _summary_agent
 
 
@@ -300,7 +299,7 @@ async def _summarize(deps: ScanContext, results: dict) -> Optional[str]:
             return f"Failed to fetch HTML: {e}"
 
     html_content = await asyncio.to_thread(_fetch_html, deps.target_url)
-        
+
     prompt = (
         f"Target: {deps.target_url} ({deps.scan_mode} scan). "
         f"Attack surface discovered: {len(deps.discovered_urls)} endpoint(s), "
@@ -308,7 +307,7 @@ async def _summarize(deps: ScanContext, results: dict) -> Optional[str]:
         f"Tool results — {digest}. Summarise the security posture.\n\n"
         f"Target HTML Context:\n```html\n{html_content}\n```"
     )
-    
+
     # Run the agent with dependencies
     result = await _get_summary_agent().run(prompt, deps=deps)
     text = (result.output or "").strip()
@@ -329,6 +328,9 @@ async def run_scan(
     LLM is used only to summarise results afterwards — not to orchestrate tools — which
     keeps ordering deterministic and avoids parallel-tool-call resource conflicts.
     """
+    target_url = target_url.split("#", 1)[0]
+    print(f"[DEBUG] target_url at run_scan entry: {target_url!r}")  # Bug #2 trace — remove once confirmed clean
+
     await broadcast({"event": "scan_started", "data": {"scanId": scan_id}})
 
     tools = get_tools_for_mode(scan_mode, selected_tools)
@@ -374,8 +376,8 @@ async def run_scan(
             if summary:
                 await broadcast({"event": "agent_reasoning", "data": {"text": summary}})
         except AgentHaltedException:
-            # [ArmorGuard AI Rewrite] - If ArmorIQ halts during the summary phase due to 
-            # prompt injection, abort immediately and DO NOT broadcast scan_completed.
+            # If ArmorIQ halts during the summary phase (e.g. real prompt-injection
+            # block), abort immediately and DO NOT broadcast scan_completed.
             return
         except Exception as e:
             print(f"SUMMARIZE FAILED WITH EXCEPTION: {e}", flush=True)

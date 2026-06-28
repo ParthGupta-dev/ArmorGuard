@@ -3,40 +3,25 @@ import logging
 import subprocess
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from agent.config import HTTPX_PATH
 
 def run_httpx_scan(
-    target_url: str, 
-    scan_id: str, 
-    client: Optional[Any] = None, 
-    intent_token: Optional[Any] = None
+    target_url: str,
+    scan_id: str,
 ) -> List[Dict[str, Any]]:
     """Runs ProjectDiscovery httpx binary against the target URL and analyzes response headers for security misconfigurations.
-    Every call is validated in real-time by the ArmorIQ client before execution.
-    
+    Every call is gated by ArmorIQ before this function is ever invoked — see
+    `agent.agent._armoriq_gate`, the single chokepoint every scanner passes through.
+
     Args:
         target_url: The target website URL.
         scan_id: The active scan identifier.
-        client: The ArmorIQ client wrapper instance.
-        intent_token: The signed intent token.
-        
+
     Returns:
         List of findings matching the Finding shape contract.
     """
     print(f"[httpx_tool] Starting HTTPX scan against: {target_url}")
-    
-    # 1. Perform ArmorIQ Intent Verification before execution
-    if client is not None and intent_token is not None:
-        print("[httpx_tool] Verifying intent with ArmorIQ...")
-        # This will raise PolicyBlockedException / IntentMismatchException if blocked/mismatched
-        client.invoke(
-            mcp="agent_tools",
-            action="httpx",
-            intent_token=intent_token,
-            params={"target": target_url}
-        )
-        print("[httpx_tool] Intent verified successfully by ArmorIQ.")
 
     cmd = [
         HTTPX_PATH,
@@ -46,7 +31,7 @@ def run_httpx_scan(
         "-no-stdin",
         "-silent"
     ]
-    
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         output = result.stdout.strip()
@@ -81,9 +66,9 @@ def run_httpx_scan(
                     merged.update(item)
             raw_headers = merged
         headers_lower = {k.lower(): v for k, v in raw_headers.items()}
-        
+
         findings = []
-        
+
         # Check security headers
         # 1. Content-Security-Policy (CSP)
         if "content-security-policy" not in headers_lower:
@@ -97,7 +82,7 @@ def run_httpx_scan(
                 "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
-            
+
         # 2. X-Frame-Options (Clickjacking)
         if "x-frame-options" not in headers_lower:
             findings.append({
@@ -110,7 +95,7 @@ def run_httpx_scan(
                 "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
-            
+
         # 3. X-Content-Type-Options
         if "x-content-type-options" not in headers_lower:
             findings.append({
@@ -123,7 +108,7 @@ def run_httpx_scan(
                 "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
-            
+
         # 4. Referrer-Policy
         if "referrer-policy" not in headers_lower:
             findings.append({
@@ -136,7 +121,7 @@ def run_httpx_scan(
                 "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
-            
+
         # 5. Strict-Transport-Security (HSTS) - Only for HTTPS
         is_https = target_url.lower().startswith("https://")
         if is_https and "strict-transport-security" not in headers_lower:
@@ -150,10 +135,10 @@ def run_httpx_scan(
                 "evidence": f"Target: {target_url}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
-            
+
         print(f"[httpx_tool] Completed scan. Found {len(findings)} issues.")
         return findings
-        
+
     except subprocess.TimeoutExpired:
         print("[httpx_tool] Subprocess timeout expired.")
         return []

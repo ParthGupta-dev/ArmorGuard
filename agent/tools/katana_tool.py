@@ -39,6 +39,9 @@ def run_katana_crawl(target_url: str, scan_id: str) -> Tuple[List[str], List[str
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=75)
         output = result.stdout.strip()
+        print(f"[katana_tool] raw stdout ({len(output)} bytes): {output[:500]!r}")
+        if result.stderr.strip():
+            print(f"[katana_tool] stderr: {result.stderr.strip()[:500]!r}")
 
         urls: set = set()
         for line in output.splitlines():
